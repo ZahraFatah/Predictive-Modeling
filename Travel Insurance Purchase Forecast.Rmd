@@ -1,0 +1,1139 @@
+---
+title: "Travel Insurance Purchase Forecast"
+author: "Zahra Fatah"
+date: "2023-11-20"
+output:
+  pdf_document: default
+  word_document: default
+---
+A tour \& travels company is offering travel insurance package to their customers. The new insurance package also includes COVID cover. The company wants to know which customers would be interested to buy it based on their database history. The insurance was offered to some of the customers in 2019 and the given data has been extracted from the performance/sales of the package during that period. The data is provided for almost 2000 of its previous customers and the goal is to build a model that can predict if the customer will be interested to buy the travel insurance package.
+
+```{r}
+#par( mfrow= c(3,2) )
+
+draw_confusion_matrix <- function(cm) {
+
+  total <- sum(cm$table)
+  res <- as.numeric(cm$table)
+
+  # Generate color gradients. Palettes come from RColorBrewer.
+  greenPalette <- c("#F7FCF5","#E5F5E0","#C7E9C0","#A1D99B","#74C476","#41AB5D","#238B45","#006D2C","#00441B")
+  redPalette <- c("#FFF5F0","#FEE0D2","#FCBBA1","#FC9272","#FB6A4A","#EF3B2C","#CB181D","#A50F15","#67000D")
+  getColor <- function (greenOrRed = "green", amount = 0) {
+    if (amount == 0)
+      return("#FFFFFF")
+    palette <- greenPalette
+    if (greenOrRed == "red")
+      palette <- redPalette
+    colorRampPalette(palette)(100)[10 + ceiling(90 * amount / total)]
+  }
+
+  # set the basic layout
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+
+  # create the matrix 
+  classes = colnames(cm$table)
+  rect(150, 430, 240, 370, col=getColor("green", res[1]))
+  text(195, 435, classes[1], cex=1.2)
+  rect(250, 430, 340, 370, col=getColor("red", res[3]))
+  text(295, 435, classes[2], cex=1.2)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=2)
+  text(245, 450, 'Actual', cex=1.3, font=2)
+  rect(150, 305, 240, 365, col=getColor("red", res[2]))
+  rect(250, 305, 340, 365, col=getColor("green", res[4]))
+  text(140, 400, classes[1], cex=1.2, srt=90)
+  text(140, 335, classes[2], cex=1.2, srt=90)
+
+  # add in the cm results
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS", xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+
+  # add in the accuracy information 
+  text(50, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(50, 20, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  #text(70, 35, names(cm$overall[2]), cex=1.5, font=2)
+  #text(70, 20, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+}
+
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(gridExtra)
+library(GGally)
+library(skimr)
+library(MASS)
+library(ROCR)
+library(caret)
+library(randomForest)
+library(tree)
+library(boot)
+library(gbm)
+library(e1071)
+library(nnet)
+```
+
+```{r}
+data=read.csv("TravelInsuranceData.csv",header=TRUE)
+TravelInsuranceTest=read.csv("TravelInsuranceTest.csv",header=T)
+
+```
+
+```{r}
+Insurance_data= data[,-1] # Removing very first column as it was not necessary in the data analysis.
+TravelInsuranceTest=TravelInsuranceTest[,-1]
+```
+
+```{r}
+Insurance_data$ChronicDiseases=as.factor(Insurance_data$ChronicDiseases)
+Insurance_data$Employment.Type= as.factor(Insurance_data$Employment.Type)
+Insurance_data$GraduateOrNot= as.factor(Insurance_data$GraduateOrNot)
+Insurance_data$FrequentFlyer= as.factor(Insurance_data$FrequentFlyer)
+Insurance_data$EverTravelledAbroad= as.factor(Insurance_data$EverTravelledAbroad)
+Insurance_data$TravelInsurance= as.factor(Insurance_data$TravelInsurance)
+```
+
+
+```{r}
+TravelInsuranceTest$ChronicDiseases=as.factor(TravelInsuranceTest$ChronicDiseases)
+TravelInsuranceTest$Employment.Type= as.factor(TravelInsuranceTest$Employment.Type)
+TravelInsuranceTest$GraduateOrNot= as.factor(TravelInsuranceTest$GraduateOrNot)
+TravelInsuranceTest$FrequentFlyer= as.factor(TravelInsuranceTest$FrequentFlyer)
+TravelInsuranceTest$EverTravelledAbroad= as.factor(TravelInsuranceTest$EverTravelledAbroad)
+TravelInsuranceTest$TravelInsurance= as.factor(TravelInsuranceTest$TravelInsurance)
+```
+
+1. Before we create a model, do some data cleaning, feature selection and exploratory data analysis.
+
+```{r}
+unique(Insurance_data$ChronicDiseases)
+unique(Insurance_data$Employment.Type)
+unique(Insurance_data$GraduateOrNot)
+unique(Insurance_data$FrequentFlyer)
+unique(Insurance_data$EverTravelledAbroad)
+unique(Insurance_data$TravelInsurance)
+
+unique(Insurance_data$AnnualIncome)
+unique(Insurance_data$Age)
+unique(Insurance_data$FamilyMembers)
+
+skim_without_charts(Insurance_data)
+```
+
+##Annual Income
+```{r echo=FALSE}
+# Box plot
+box_plot <- ggplot(Insurance_data, aes(y = AnnualIncome)) +
+  geom_boxplot(color = "blue") +
+  labs(title = "Box Plot") +
+ theme(panel.grid = element_blank())
+
+# Histogram
+histogram_plot <- ggplot(Insurance_data, aes(x = AnnualIncome)) +
+  geom_histogram(binwidth = 3, color = "blue") +
+  labs(title = "Histogram") +
+  theme(panel.grid = element_blank())
+
+# Combine the plots using grid.arrange from gridExtra package
+
+grid.arrange(box_plot, histogram_plot, ncol = 2, widths = c(4, 4),heights=c(4, 4))
+```
+
+## Family members
+
+```{r echo=FALSE}
+# Box plot
+box_plot <- ggplot(Insurance_data, aes(y = FamilyMembers)) +
+  geom_boxplot(color = "blue") +
+  labs(title = "Box Plot") +
+ theme(panel.grid = element_blank())
+
+# Histogram
+histogram_plot <- ggplot(Insurance_data, aes(x = FamilyMembers)) +
+  geom_histogram(binwidth = 0.5, fill= "blue",color = "blue") +
+  labs(title = "Histogram") +
+  theme(panel.grid = element_blank())
+
+# Combine the plots using grid.arrange from gridExtra package
+
+grid.arrange(box_plot, histogram_plot, ncol = 2, widths = c(4, 4),heights=c(4, 4))
+```
+
+### Age
+```{r echo=FALSE}
+# Box plot
+box_plot <- ggplot(Insurance_data, aes(y = Age)) +
+  geom_boxplot(color = "blue") +
+  labs(title = "Box Plot") +
+ theme(panel.grid = element_blank())
+
+# Histogram
+histogram_plot <- ggplot(Insurance_data, aes(x = Age)) +
+  geom_histogram(binwidth = 0.5, fill= "blue",color = "blue") +
+  labs(title = "Histogram") +
+  theme(panel.grid = element_blank())
+
+# Combine the plots using grid.arrange from gridExtra package
+
+grid.arrange(box_plot, histogram_plot, ncol = 2, widths = c(4, 4),heights=c(4, 4))
+```
+
+
+### Categorical Variables
+
+```{r echo=FALSE}
+df= Insurance_data %>% group_by((TravelInsurance)) %>% summarise(n=n()) %>% mutate(perc = n/ sum(n)) %>% mutate(labels = scales::percent(perc))
+df$`(TravelInsurance)`
+par(mfrow = c(3, 2))
+options(repr.plot.width =3, repr.plot.height =3)
+# Pie plot
+g = ggplot(data=df, aes(x="",y=perc,fill=`(TravelInsurance)`))
+g1=g + geom_col() + coord_polar(theta = "y") + geom_text(aes(label = labels),
+position = position_stack(vjust = 0.5)) +
+  theme_minimal()
+
+# Bar Plot
+g = ggplot(data=Insurance_data,aes(x=TravelInsurance,fill=TravelInsurance))
+g2 = g+ geom_bar() +labs(y = "Count", x= "Annual Income") + theme_minimal()
+
+df= Insurance_data %>% group_by((EverTravelledAbroad)) %>% summarise(n=n()) %>% mutate(perc = n/ sum(n)) %>% mutate(labels = scales::percent(perc))
+# Pie plot
+g = ggplot(data=df, aes(x="",y=perc,fill=`(EverTravelledAbroad)`))
+g3=g + geom_col() + coord_polar(theta = "y") + geom_text(aes(label = labels),
+position = position_stack(vjust = 0.5)) +
+  theme_minimal()
+# Bar Plot
+g = ggplot(data=Insurance_data,aes(x=EverTravelledAbroad,fill=EverTravelledAbroad))
+g4 = g+ geom_bar() +labs(y = "Count", x= "Ever Travelled Abroad")
+
+df= Insurance_data %>% group_by((FrequentFlyer)) %>% summarise(n=n()) %>% mutate(perc = n/ sum(n)) %>% mutate(labels = scales::percent(perc))
+# Pie plot
+g = ggplot(data=df, aes(x="",y=perc,fill=`(FrequentFlyer)`))
+g5=g + geom_col() + coord_polar(theta = "y") + geom_text(aes(label = labels),
+position = position_stack(vjust = 0.5)) +
+  theme_minimal()
+# Bar Plot
+g = ggplot(data=Insurance_data,aes(x=FrequentFlyer,fill=FrequentFlyer))
+g6 = g+ geom_bar() +labs(y = "Count", x= "Frequent Flyer")
+grid.arrange(g1,g2,g3, g4,g5,g6,nrow=3, ncol = 2, widths = c(4, 4))
+
+
+```
+
+### Categorical Variables 2
+
+```{r echo=FALSE}
+df= Insurance_data %>% group_by((GraduateOrNot)) %>% summarise(n=n()) %>% mutate(perc = n/ sum(n)) %>% mutate(labels = scales::percent(perc))
+df$`(TravelInsurance)`
+par(mfrow = c(3, 2))
+options(repr.plot.width =3, repr.plot.height =3)
+# Pie plot
+g = ggplot(data=df, aes(x="",y=perc,fill=`(GraduateOrNot)`))
+g1=g + geom_col() + coord_polar(theta = "y") + geom_text(aes(label = labels),
+position = position_stack(vjust = 0.5)) +
+  theme_minimal()
+
+# Bar Plot
+g = ggplot(data=Insurance_data,aes(x=GraduateOrNot,fill=GraduateOrNot))
+g2 = g+ geom_bar() +labs(y = "Count", x= "Graduate Or Not") + theme_minimal()
+
+df= Insurance_data %>% group_by((Employment.Type)) %>% summarise(n=n()) %>% mutate(perc = n/ sum(n)) %>% mutate(labels = scales::percent(perc))
+# Pie plot
+g = ggplot(data=df, aes(x="",y=perc,fill=`(Employment.Type)`))
+g3=g + geom_col() + coord_polar(theta = "y") + geom_text(aes(label = labels),
+position = position_stack(vjust = 0.5)) +
+  theme_minimal()
+# Bar Plot
+g = ggplot(data=Insurance_data,aes(x=Employment.Type,fill=Employment.Type))
+g4 = g+ geom_bar() +labs(y = "Count", x= "Employment Type")
+
+df= Insurance_data %>% group_by((ChronicDiseases)) %>% summarise(n=n()) %>% mutate(perc = n/ sum(n)) %>% mutate(labels = scales::percent(perc))
+# Pie plot
+g = ggplot(data=df, aes(x="",y=perc,fill=`(ChronicDiseases)`))
+g5=g + geom_col() + coord_polar(theta = "y") + geom_text(aes(label = labels),
+position = position_stack(vjust = 0.5)) +
+  theme_minimal()
+# Bar Plot
+g = ggplot(data=Insurance_data,aes(x=ChronicDiseases,fill=ChronicDiseases))
+g6 = g+ geom_bar() +labs(y = "Count", x= "Chronic Diseases")
+grid.arrange(g1,g2,g3, g4,g5,g6,nrow=3, ncol = 2, widths = c(4, 4))
+
+
+```
+
+
+
+### plot of AnnualIncome by Insurance
+
+```{r echo=FALSE}
+# Box plot of AnnualIncome by TravelInsurance
+boxplot_Income <- ggplot(Insurance_data, aes(x = TravelInsurance, y = AnnualIncome)) +
+  geom_boxplot(color = "blue") +
+  labs(title = "Box Plot of AnnualIncome by TravelInsurance")+
+  theme(panel.grid = element_blank())
+
+
+# Violin plot of AnnualIncome by TravelInsurance
+violinplot_Income <- ggplot(Insurance_data, aes(x = TravelInsurance, y=AnnualIncome, fill = TravelInsurance)) +
+  geom_violin() +
+  labs(title = "Violin Plot of AnnualIncome by TravelInsurance")
+  
+
+# bar plot of IncAnnualIncomeome by TravelInsurance
+g = ggplot(data=Insurance_data,aes(x=AnnualIncome,fill=TravelInsurance))
+barplot_Income = g + geom_bar(width =20000) +
+labs(y = "Frequency", x= "Annual Income",
+     title = "Bar Plot of AnnualIncome by TravelInsurance")
+
+# Faceted histogram of AnnualIncome by TravelInsurance
+histogram_Income <- ggplot(Insurance_data, aes(x = AnnualIncome, fill = TravelInsurance)) +
+  geom_histogram(binwidth = 100000) +
+  facet_wrap(~TravelInsurance, ncol = 3) +
+  labs(title = "Faceted Histogram of Income by Insurance")
+
+
+grid.arrange(boxplot_Income,violinplot_Income,barplot_Income, histogram_Income,nrow=2, ncol = 2, widths = c(4, 4))
+```
+
+
+### plot of Age by Insurance
+
+```{r echo=FALSE}
+# Box plot of Age by TravelInsurance
+boxplot_Age <- ggplot(Insurance_data, aes(x = TravelInsurance, y = Age)) +
+  geom_boxplot(color = "blue") +
+  labs(title = "Box Plot of Age by TravelInsurance")+
+  theme(panel.grid = element_blank())
+
+
+# Violin plot of Age by TravelInsurance
+violinplot_Age <- ggplot(Insurance_data, aes(x = TravelInsurance, y=Age, fill = TravelInsurance)) +
+  geom_violin() +
+  labs(title = "Violin Plot of Age by TravelInsurance")
+  
+
+# bar plot of Age by TravelInsurance
+g = ggplot(data=Insurance_data,aes(x=Age,fill=TravelInsurance))
+barplot_Age = g + geom_bar(width =1) +
+labs(y = "Frequency", x= "Age",
+     title = "Bar Plot of Age by TravelInsurance")
+
+# Faceted histogram of Age by TravelInsurance
+histogram_Age <- ggplot(Insurance_data, aes(x = Age, fill = TravelInsurance)) +
+  geom_histogram(binwidth = 1) +
+  facet_wrap(~TravelInsurance, ncol = 3) +
+  labs(title = "Faceted Histogram of Age by Insurance")
+
+
+grid.arrange(boxplot_Age,violinplot_Age,barplot_Age, histogram_Age,nrow=2, ncol = 2, widths = c(4, 4))
+```
+
+
+## plot of FamilyMembers by Insurance
+
+```{r echo=FALSE}
+# Box plot of FamilyMembers by TravelInsurance
+boxplot_FamilyMembers <- ggplot(Insurance_data, aes(x = TravelInsurance, y = FamilyMembers)) +
+  geom_boxplot(color = "blue") +
+  labs(title = "Box Plot of FamilyMembers by TravelInsurance")+
+  theme(panel.grid = element_blank())
+
+
+# Violin plot of FamilyMembers by TravelInsurance
+violinplot_FamilyMembers <- ggplot(Insurance_data, aes(x = TravelInsurance, y=FamilyMembers, fill = TravelInsurance)) +
+  geom_violin() +
+  labs(title = "Violin Plot of FamilyMembers by TravelInsurance")
+  
+
+# bar plot of FamilyMembers by TravelInsurance
+g = ggplot(data=Insurance_data,aes(x=FamilyMembers,fill=TravelInsurance))
+barplot_FamilyMembers = g + geom_bar(width =1) +
+labs(y = "Frequency", x= "FamilyMembers",
+     title = "Bar Plot of FamilyMembers by TravelInsurance")
+
+# Faceted histogram of FamilyMembers by TravelInsurance
+histogram_FamilyMembers <- ggplot(Insurance_data, aes(x = FamilyMembers, fill = TravelInsurance)) +
+  geom_histogram(binwidth = 1) +
+  facet_wrap(~TravelInsurance, ncol = 3) +
+  labs(title = "Faceted Histogram of FamilyMembers by Insurance")
+
+
+grid.arrange(boxplot_FamilyMembers,violinplot_FamilyMembers,barplot_FamilyMembers, histogram_FamilyMembers,nrow=2, ncol = 2, widths = c(4, 4))
+```
+
+
+```{r}
+#ggpairs(data = Insurance_data %>% select(TravelInsurance,Age, AnnualIncome,FamilyMembers))
+```
+
+2. Come up with a set of candidate methods that is suitable for the data.
+
+3. Fit the models with training data.
+
+4. Reduce the dimension of features by performing feature selection or dimension reduction.
+
+5. Adjust the tuning parameters using cross-validation or model performance criteria such as error rate, AUC, etc.
+
+5. Check the adequacy of the model fits and possibly revise the model.
+
+6. Compare the models and choose your final model base on the prediction accuracy on the test data.
+
+# Logestic regression
+2) Logistic Model
+
+use all variables as predictor:
+
+```{r}
+set.seed(100)
+
+# Step 1: Split the data into training and testing sets
+sample_index= sample(1:nrow(Insurance_data), 0.8 * nrow(Insurance_data))
+train_data=Insurance_data[sample_index, ]
+test_data=Insurance_data[-sample_index, ]
+
+# Step 2: Train the logistic regression model
+model= glm(TravelInsurance ~ Age + Employment.Type + GraduateOrNot + AnnualIncome + FamilyMembers +ChronicDiseases + FrequentFlyer + EverTravelledAbroad, 
+              family = binomial, data = train_data)
+summary(model)
+```
+
+## observation
+
+-looking at the logistic model when trained on the training data, still statically significant variables and statically insignificant variables are the same.
+
+Observation
+-Here Age, AnnualIncome, FamilyMembers, FrequentFlyerYes,EverTravelledAbroadYes are statically significant in determining weather the customer will purchase a travel insurance or not.
+
+-likewise ChronicDiseases1, GraduateOrNotYes, Employment.TypePrivate Sector/Self Employed are not statically significant indicating that they are not important for customer in purchasing the travel insurance.
+
+-for every one unit change in customers age, the log odd of purchasing travel insurance is increased by 7.29e-02 units
+
+-for every one unit change in customers Annual income, the log odd of purchasing travel insurance is increased by 1.56e-06 units
+
+-for every one unit change in customers number of family members in the family, the log odd of purchasing travel insurance is increased by 1.44e-01 units
+
+```{r}
+set.seed(100)
+# Step 3: Make predictions on the testing set
+predictions_glm= predict(model, newdata = test_data, type = "response")
+
+```
+
+
+```{r}
+set.seed(100)
+
+predicted_labels= ifelse(predictions_glm > 0.5, 1, 0)
+
+
+```
+let's see the confusion matrix 
+
+```{r}
+#########################
+pred=as.factor(predicted_labels)
+cm_glm = confusionMatrix(pred,test_data$TravelInsurance,positive = "1")
+cm_glm$positive
+draw_confusion_matrix(cm_glm)
+#################################
+table(predicted_labels,test_data$TravelInsurance)
+#(accuracy_glm=(cm_glm[1,1]+cm_glm[2,2])/(cm_glm[1,1]+cm_glm[1,2]+cm_glm[2,1]+cm_glm[2,2]))
+#(recall= (cm_glm[2,2])/(cm_glm[2,2]+cm_glm[2,1]))
+#(precision=(cm_glm[2,2])/(cm_glm[2,2]+cm_glm[1,2]))
+```
+
+Therefor the test accuracy of the logistic model is $Accuracy = \frac{TP+TN}{TP+TN+FP+FN}$ (224+72)/378= 0.7848325 i.e 78.30%
+
+$Precision = \frac{TP}{TP+TN} = \frac{72}{72+68}$
+$Recall = \frac{TP}{TP+FN} = \frac{72}{72+14}$
+
+
+```{r}
+########## ROC curve #################
+
+rocplot <- function(pred, truth) {
+  predob <- prediction(pred, truth)
+  perf <- performance(predob, "tpr", "fpr")
+  plot(perf)
+}
+
+# Make predictions on the testing set
+#predictions.fselected <- predict(model.fselct, newdata = test_data, type = "response")
+predictions.fselect= predict(model, newdata = test_data, type = "response")
+# Extract the predicted probabilities
+fitted <- as.numeric(predictions.fselect)
+
+# Display the ROC plot
+rocplot(fitted, test_data$TravelInsurance)
+```
+
+# Logestic regression:
+## Feature selection
+
+-Here Age, AnnualIncome, FamilyMembers, FrequentFlyerYes,EverTravelledAbroadYes are statically significant in determining weather the customer will purchase a travel insurance or not.
+
+```{r}
+set.seed(100)
+# Step 2: Train the logistic regression model
+model.fselect= glm(TravelInsurance ~ Age  + AnnualIncome + FamilyMembers + FrequentFlyer + EverTravelledAbroad, family = binomial, data = train_data)
+summary(model.fselect)
+```
+
+
+```{r}
+set.seed(100)
+# Step 3: Make predictions on the testing set
+predictions.fselect= predict(model.fselect, newdata = test_data, type = "response")
+predictions.fselect[1:10] #let's look at the first 10 predictions by the logistic model on the test data
+```
+
+```{r}
+set.seed(100)
+# let's give the predicted model a good name of labels
+# Convert predicted probabilities to binary predictions (0 or 1)
+predicted_labels.fselect= ifelse(predictions.fselect > 0.5, 1, 0)
+predicted_labels.fselect[1:10]  # looking at the predictive level of first 10 observation by logistic regration 
+```
+
+```{r}
+#########################
+pred=as.factor(predicted_labels.fselect)
+cm_glm.fselect = confusionMatrix(pred,test_data$TravelInsurance,positive = "1")
+
+draw_confusion_matrix(cm_glm.fselect)
+#################################
+set.seed(100)
+cm_glm.fselect=table(predicted_labels.fselect,test_data$TravelInsurance)
+(accuracy_glm.fselect=(cm_glm.fselect[1,1]+cm_glm.fselect[2,2])/(cm_glm.fselect[1,1]+cm_glm.fselect[1,2]+cm_glm.fselect[2,1]+cm_glm.fselect[2,2]))
+(recall_glm.fselect= (cm_glm.fselect[2,2])/(cm_glm.fselect[2,2]+cm_glm.fselect[2,1]))
+(precision_glm.fselect=(cm_glm.fselect[2,2])/(cm_glm.fselect[2,2]+cm_glm.fselect[1,2]))
+```
+
+```{r}
+########## ROC curve #################
+
+rocplot <- function(pred, truth) {
+  predob <- prediction(pred, truth)
+  perf <- performance(predob, "tpr", "fpr")
+  plot(perf)
+}
+
+# Make predictions on the testing set
+#predictions.fselected <- predict(model.fselct, newdata = test_data, type = "response")
+predictions.fselect= predict(model.fselect, newdata = test_data, type = "response")
+
+# Extract the predicted probabilities
+fitted <- as.numeric(predictions.fselect)
+
+# Display the ROC plot
+rocplot(fitted, test_data$TravelInsurance)
+```
+
+## Logistic regression 
+## cross validation
+```{r}
+set.seed(100)
+logistic_regression_caret_model = train(
+  form = TravelInsurance ~ Age  + AnnualIncome + FamilyMembers + FrequentFlyer + EverTravelledAbroad,
+  #tuneLenght=10,
+  data = train_data,
+  trControl = trainControl(method = "cv", number = 10),
+  method = "glm",
+  family = "binomial"
+)
+summary(logistic_regression_caret_model)
+```
+
+
+# Linear Discriminant Analysis
+
+```{r}
+set.seed(100)
+#install.packages("MASS")
+library(MASS)
+
+lda.out=lda(TravelInsurance ~ Age + Employment.Type + GraduateOrNot + AnnualIncome + FamilyMembers + ChronicDiseases + FrequentFlyer + EverTravelledAbroad, data = train_data)
+lda.out
+```
+
+## Observation 
+
+-The LDA output indicates that 64.09% of the training observation corresponds to customer not taking the travel insurance and 35.90% of the training observation corresponds to the customer taking the travel insurance
+
+
+
+```{r}
+plot(lda.out)
+```
+
+```{r}
+set.seed(100)
+lda.pred <- predict(lda.out , test_data)
+names(lda.pred)
+lda.pred$class[1:10] # What LDA predict for first 10 observation
+```
+
+```{r}
+
+lda.class <- lda.pred$class
+table(lda.class, test_data$TravelInsurance)
+
+#########################
+cm_lda = confusionMatrix(lda.class,test_data$TravelInsurance,positive = "1")
+draw_confusion_matrix(cm_lda)
+#################################
+```
+
+For the LDA  
+$Accuracy = \frac{TP+TN}{TP+TN+FP+FN}$ (210+83)/378= 0.7751 i.e 77.51%
+
+$Precision = \frac{TP}{TP+TN} = \frac{83}{83+16}$ =0.8384
+$Recall = \frac{TP}{TP+FN} = \frac{83}{83+69}$ =0.5355
+
+## feature selected
+
+```{r}
+lda.select=lda(TravelInsurance ~ Age  + AnnualIncome + FamilyMembers + FrequentFlyer + EverTravelledAbroad, data = train_data)
+lda.out
+```
+
+```{r}
+lda.pred.select <- predict(lda.select , test_data)
+names(lda.pred.select)
+lda.pred.select$class[1:10] # What LDA predict for first 10 observation
+```
+
+```{r}
+
+lda.class.select <- lda.pred.select$class
+table(lda.class.select, test_data$TravelInsurance)
+
+#########################
+cm_lda.select = confusionMatrix(lda.class.select,test_data$TravelInsurance,positive = "1")
+draw_confusion_matrix(cm_lda.select)
+#################################
+```
+
+For the LDA  
+$Accuracy = \frac{TP+TN}{TP+TN+FP+FN}$ (210+83)/378= 0.7751 i.e 77.51%
+
+$Precision = \frac{TP}{TP+TN} = \frac{82}{82+70}$ =0.5395
+$Recall = \frac{TP}{TP+FN} = \frac{82}{82+15}$ =0.8454
+
+
+
+4) Quadratic Discriminant Analysis
+
+```{r}
+qda.out=qda(TravelInsurance ~ Age + Employment.Type + GraduateOrNot + AnnualIncome + FamilyMembers + ChronicDiseases + FrequentFlyer + EverTravelledAbroad, data = train_data)
+qda.out
+```
+Observation 
+-The QDA output indicates that 64.09% of the training observation corresponds to customer not taking the travel insurance and 35.90% of the training observation corresponds to the customer taking the travel insurance
+
+```{r}
+qda.pred <- predict(qda.out , test_data)
+names(qda.pred)
+qda.pred$class[1:10] # What QDA predict for first 10 observation
+
+set.seed(100)
+qda.class <- qda.pred$class
+table(qda.class, test_data$TravelInsurance)
+
+#########################
+
+cm_qda = confusionMatrix(qda.class,test_data$TravelInsurance,positive = "1")
+
+draw_confusion_matrix(cm_qda )
+#################################
+ 
+(204+90)/378
+
+90/(90+62)
+
+90/(90+22)
+```
+
+$Accuracy = \frac{TP+TN}{TP+TN+FP+FN}$ (204+90)/378= 0.7778 i.e 77.78%
+
+$Precision = \frac{TP}{TP+TN} = \frac{90}{90+62}$ =0.5921
+$Recall = \frac{TP}{TP+FN} = \frac{90}{90+22}$ =0.8036
+
+### feature selection
+
+```{r}
+qda.select=qda(TravelInsurance ~ Age  + AnnualIncome + FamilyMembers + FrequentFlyer + EverTravelledAbroad, data = train_data)
+qda.select
+```
+
+```{r}
+qda.pred.select <- predict(qda.select , test_data)
+names(qda.pred.select)
+qda.pred.select$class[1:10] # What QDA predict for first 10 observation
+
+set.seed(100)
+qda.class.select <- qda.pred.select$class
+table(qda.class.select, test_data$TravelInsurance)
+ #########################
+cm_qda.select = confusionMatrix(qda.class.select,test_data$TravelInsurance,positive = "1")
+draw_confusion_matrix(cm_qda.select)
+#################################
+(203+89)/378
+
+89/(89+63)
+
+89/(89+23)
+```
+
+$Accuracy = \frac{TP+TN}{TP+TN+FP+FN}$ (203+89)/378 =0.7725 i.e 77.25%
+
+$Precision = \frac{TP}{TP+TN} = \frac{89}{89+63}$ =0.5855
+$Recall = \frac{TP}{TP+FN} = \frac{89}{89+23}$ = 0.7946
+
+##########################################
+KNN
+###########################################
+1) KNN- classifier
+
+```{r}
+set.seed(100)
+# cagtegorical variable as factor
+Insurance_data$ChronicDiseases=as.factor(Insurance_data$ChronicDiseases)
+Insurance_data$Employment.Type= as.factor(Insurance_data$Employment.Type)
+Insurance_data$GraduateOrNot= as.factor(Insurance_data$GraduateOrNot)
+Insurance_data$FrequentFlyer= as.factor(Insurance_data$FrequentFlyer)
+Insurance_data$EverTravelledAbroad= as.factor(Insurance_data$EverTravelledAbroad)
+Insurance_data$TravelInsurance= as.factor(Insurance_data$TravelInsurance)
+```
+
+
+```{r}
+# converting all my dataset to numeric for the model setting
+Insurance_data_num <- as.data.frame(lapply(Insurance_data[,1:8], as.numeric))
+```
+
+```{r}
+set.seed(100)
+knn_fit = train(
+  TravelInsurance ~ .,
+  data = train_data,
+  method = "knn",
+  tuneLength=10,
+  trControl = trainControl(method = "cv", number = 10),
+  preProcess = c("center", "scale")
+)
+
+knn_fit
+KNN_pred=predict(knn_fit , test_data)
+cm=table(KNN_pred,test_data$TravelInsurance)
+(212+94)/378
+94/(94+58)
+94/(94+14)
+
+#########################
+cm_KNN = confusionMatrix(KNN_pred,test_data$TravelInsurance,positive = "1")
+draw_confusion_matrix(cm_KNN)
+#################################
+```
+
+$Accuracy = \frac{TP+TN}{TP+TN+FP+FN}$ (169+39)/378= 0.8095 i.e 80.95%
+
+$Precision = \frac{TP}{TP+TN} = \frac{94}{94+58}$ =0.6184
+$Recall = \frac{TP}{TP+FN} = \frac{94}{94+14}$ =0.8704
+
+using the cross validation for finding the best number of class, k=17
+
+#################
+# DT and Prued DT
+################
+
+```{r}
+tree.d=tree(TravelInsurance~., data=Insurance_data,split="gini",subset= sample_index)
+summary(tree.d)
+```
+
+- The Insurance tree has 154 terminal nodes or leaves, which are the endpoints where the classification decisions are made.It is very crowded tree
+
+
+- The residual mean deviance is 0.763. A lower deviance indicates a better fit of the model to the data.
+
+- The misclassification error rate for this tree is 0.164 , which is calculated as 247 misclassified cases out of a total of 159 cases in train data. 
+
+(2) Create a plot of the tree. Pick one of the terminal nodes, and interpret the information displayed.
+
+```{r}
+plot(tree.d)
+#text(tree.d)
+#tree.d
+```
+
+
+(3) Predict the labels on the test data, and produce a confusion matrix comparing the test labels to the predicted test labels. What is the test error rate?
+
+```{r}
+set.seed(100)
+pred.d=predict(tree.d,test_data,type="class")
+
+DT.cm=confusionMatrix(pred.d, test_data$TravelInsurance,positive = "1")
+draw_confusion_matrix(DT.cm)
+
+table(pred.d,test_data$TravelInsurance)
+
+```
+
+(4) Apply the cv.tree() function to the training set in order to determine the optimal tree size. Produce a plot with tree size on the x-axis and cross-validated classification error rate on the y-axis. Which tree size corresponds to the lowest cross-validated classification error rate?
+
+```{r}
+#pruning 
+cv.d=cv.tree(tree.d)
+plot(cv.d$size, cv.d$dev, type="b") 
+cv.d$dev 
+
+```
+
+Because deviance error is constant after tree size = 5,I chose tree size = 5.
+
+(5) Produce a pruned tree corresponding to the optimal tree size obtained using cross-validation. If cross-validation does not lead to selection of a pruned tree, then create a pruned tree with five terminal nodes.
+
+```{r}
+
+prune.d=prune.tree(tree.d,best=5) 
+summary(prune.d)
+
+plot(prune.d)
+text(prune.d)
+```
+
+
+for Best tree size = 5:
+
+Residual mean deviance:  0.901 = 1360 / 1500 
+Misclassification error rate: 0.172 = 260 / 1509 
+
+Both Residual mean deviance and Misclassification error rate are greater for best tree size = 5
+
+(6) Compare the training and test error rates between the pruned and unpruned trees. Which is higher?
+
+```{r}
+
+set.seed(100)
+pred.prune=predict(prune.d,test_data,type="class")
+
+prune_DT.cm=confusionMatrix(pred.prune, test_data$TravelInsurance,positive = "1")
+draw_confusion_matrix(prune_DT.cm)
+
+table(pred.d,test_data$TravelInsurance)
+
+(test.error.DT=(42+26)/(270))
+(test.error.prune=(31+32)/270)
+```
+
+For DT:
+Residual mean deviance:  0.6359 = 455.3 / 716 
+Misclassification error rate: 0.1525 = 122 / 800 
+test.error.DT = 0.251 = (42+26)/(270)
+
+For Pruned DT:
+Residual mean deviance:  1.088 = 863.5 / 794 
+Misclassification error rate: 0.2788 = 223 / 800 
+test.error.prune= 0.233 (31+32)/270
+
+The test error for pruned DT is less that the test error for unpruned dt which is predictable.
+
+
+
+## Random Forest
+
+```{r}
+set.seed(100)
+bag.Insurance_data=randomForest(TravelInsurance~., data=Insurance_data, subset= sample_index, mtry=8, importance=TRUE) 
+bag.Insurance_data # lets take a look at the output
+
+yhat.bag=predict(bag.Insurance_data, newdata = test_data)
+
+
+table(yhat.bag, test_data$TravelInsurance)
+bag.cm=confusionMatrix(yhat.bag, test_data$TravelInsurance,positive = "1")
+draw_confusion_matrix(bag.cm)
+```
+
+```{r}
+(mtry=round(sqrt(8),0))
+# best mtry =3
+
+set.seed(100)
+
+
+(rf.fit3=randomForest(TravelInsurance~., data=Insurance_data, subset= sample_index, ntree=1000, mtry=3, importance=TRUE))
+
+
+importance(bag.Insurance_data)
+importance(rf.fit3)
+```
+AnnualIncome, Age, FamilyMembers, Employment.Type, EverTravelledAbroadYes are important variables in Bagging and RF.
+
+```{r}
+set.seed(100)
+yhat.RF=predict(rf.fit3, newdata = test_data)
+table(yhat.RF, test_data$TravelInsurance)
+RF.cm=confusionMatrix(yhat.RF, test_data$TravelInsurance,positive = "1")
+draw_confusion_matrix(RF.cm)
+TravelInsuranceTest$TravelInsurance=rep(0,100)
+TravelInsuranceTest$TravelInsurance=as.factor(TravelInsuranceTest$TravelInsurance)
+yhat.RF=predict(rf.fit3, newdata = TravelInsuranceTest)
+table(yhat.RF)
+TravelInsuranceTest$TravelInsurance=yhat.RF
+#write.csv(TravelInsuranceTest,"TravelInsuranceTest_Labeled.csv")
+#read.csv("TravelInsuranceTest_Labeled.csv",header = T)
+```
+
+
+# XGBoost 
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+set.seed(100)
+xgboost_fit = train(TravelInsurance~.,                     
+                                   data=train_data, 
+                                   method="xgbTree", 
+                                   trControl=trainControl(method = "cv", number = 5))
+
+predicted_xgboost = predict(xgboost_fit ,test_data)
+
+cm_xgboost = confusionMatrix(predicted_xgboost,test_data$TravelInsurance,positive = "1")
+
+draw_confusion_matrix(cm_xgboost)
+summary(xgboost_fit)
+```
+
+## hyperparameter tunning
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+set.seed(100)
+
+grid_gbm = expand.grid(nrounds = c(1,10),
+                      max_depth = c(1,4),
+                      eta = c(.1,.4),
+                      gamma = 0,
+                      colsample_bytree = .7,
+                      min_child_weight = 1,
+                      subsample = c(.8,1))
+
+
+xgboost_hp = train(TravelInsurance~.,                     
+                                   data=train_data, 
+                                   method="xgbTree", 
+                                   trControl=trainControl(method = "cv", number = 5),
+                                   tuneGrid = grid_gbm)
+
+predicted_xgboost = predict(xgboost_hp ,test_data)
+
+cm_xgboost = confusionMatrix(predicted_xgboost,test_data$TravelInsurance,positive = "1")
+
+draw_confusion_matrix(cm_xgboost)
+```
+
+# SVM
+
+(d) Tune the linear SVM with various values of cost. Report the cross-validation errors associated with different values of this parameter. Select an optimal cost. Compute the training and test error rates using this new cost value. Comment on your findings.
+
+```{r}
+set.seed(100)
+tune.out=tune(svm,TravelInsurance~.,data = train_data,kernel="linear",scale=T,
+              ranges=list(cost=c(0.001, 0.01, 0.1,0.5, 1,2,5,10,100)))
+summary(tune.out) 
+tune.out$best.parameters
+tune.out$best.performance
+
+set.seed(100)
+best.fit  = svm(TravelInsurance~.,data = train_data, kernel = "linear", cost = 0.01, scale = TRUE)
+
+# best fit traning error rate
+pred_train=predict(best.fit , train_data)
+table(pred_train, train_data$TravelInsurance)
+
+ # best performance error : 0.2366 
+best.train.err=(301+61)/1506
+
+# best fittest error rate
+pred_test=predict(best.fit , test_data)
+table(pred_test, test_data$TravelInsurance)
+(best.test.err = (71+11)/378)
+#0.2169
+
+#########################
+cm_svm = confusionMatrix(pred_test,test_data$TravelInsurance,positive = "1")
+draw_confusion_matrix(cm_svm)
+#################################
+```
+finding the best cost using crossvalidation and fit the model
+
+we tuned the svm model with 10-fold cross validation, the best parameter for cost =0.01, and best performance error = 0.2366  
+
+The error rate in the training data is 0.24045, and in the test data is 0.2169. 
+
+(e) Now repeat (d), with radial basis kernels, with different values of gamma and cost. Comment on your results. Which approach seems to give the better results on this data?
+
+```{r}
+set.seed(100)
+# finding best values of gomma and cost
+tune.out=tune(svm,TravelInsurance~.,data = train_data, kernel="radial",ranges=list(cost=c(0.001, 0.01, 0.1, 1,5,10),gamma=c(0.1,0.5,1,2,3,4)))
+summary(tune.out)
+tune.out$best.parameters
+tune.out$best.performance
+
+radial.svmfit = svm(TravelInsurance~.,data = train_data, kernel = "radial",gamma=0.1, cost = 10, decision.values=T)
+
+# traning error rate
+radial.pred_train =predict(radial.svmfit , train_data)
+table(radial.pred_train , train_data$TravelInsurance)
+(radial.train.err = (231+37)/1509)
+
+# test error rate
+radial.pred_test=predict(radial.svmfit, test_data)
+table(radial.pred_test, test_data$TravelInsurance)
+(radial.test.err = (56+10)/378)
+
+cm_svm_radial = confusionMatrix(radial.pred_test,test_data$TravelInsurance,positive = "1")
+draw_confusion_matrix(cm_svm_radial)
+
+```
+
+permormance error: 0.1829 cost=10 gamma =0.1
+The training error for the radial kernel (0.1776) is lower than that of the linear kernel (0.24045). However, the test error for the radial kernel (0.1746) less than the linear kernel (0.2169). Therefore, based on these results, it appears that the redial kernel is more effective for our dataset.
+
+(f) Now repeat again, with polynomial basis kernels, with different values of degree and cost. Comment on your results. Which approach (kernel) seems to give the best results on this data?
+
+```{r}
+set.seed(100)
+# finding best values of gomma and cost
+tune.out=tune(svm,TravelInsurance~.,data = train_data, kernel="polynomial",ranges=list(cost=c(0.001, 0.01, 0.1, 1,5,10,100),degree=c(0.1,0.5,1,2,3,4)))
+summary(tune.out)
+tune.out$best.parameters
+tune.out$best.performance
+
+poly.svmfit = svm(TravelInsurance~.,data = train_data, kernel = "radial",degree=3, cost = 5, decision.values=T)
+# traning error rate
+poly.pred_train =predict(poly.svmfit , train_data)
+table(poly.pred_train , train_data$TravelInsurance)
+(poly.train.err = (233+38)/1509)
+
+# test error rate
+poly.pred_test=predict(poly.svmfit, test_data)
+table(poly.pred_test, test_data$TravelInsurance)
+(poly.test.err = (56+12)/378)
+#########################
+cm_svm_poly = confusionMatrix(poly.pred_test,test_data$TravelInsurance,positive = "1")
+draw_confusion_matrix(cm_svm_poly)
+#################################
+c(best.train.err,best.test.err)
+c(radial.train.err,radial.test.err)
+c(poly.train.err,poly.test.err)
+```
+
+cost = 5 degree = 3 performance error = 0.1856
+comparing the traning and test error for linear, radial, and polynomial kernels we can see that radial kernel has the best performance.
+
+
+
+# Neural Network
+
+```{r}
+standardize=function(x) {(x-min(x))/(max(x)-min(x))}
+std.data=Insurance_data
+std.data$AnnualIncome=standardize(std.data$AnnualIncome)
+std.data$Age=standardize(std.data$Age)
+std.data$FamilyMembers=standardize(std.data$FamilyMembers)
+set.seed(100)
+ind=sample(1:nrow(std.data), 0.8*nrow(std.data))
+train=std.data[ind,]
+test=std.data[-ind,]
+
+```
+
+```{r}
+set.seed(100)
+fit=nnet(TravelInsurance~., data=train,decay=0.1, size=10, liout=FALSE) 
+```
+
+(b) Compare the classification performance of your model with that of linear logistic regression.
+
+```{r}
+
+set.seed(100)
+NN_probs=predict(fit, test)
+NN_pred <- rep("No",378)
+NN_pred[NN_probs > 0.5] = "Yes"
+
+# The confusion matrix
+(cm <- table( NN_pred,test_data$TravelInsurance))
+
+#drawing confusion matrix
+##################################################
+NN_predicted_labels= ifelse(NN_probs > 0.5, 1, 0)
+
+pred=as.factor(NN_predicted_labels)
+cm_NN = confusionMatrix(pred,test$TravelInsurance,positive= "1")
+
+draw_confusion_matrix(cm_NN)
+##################################################
+set.seed(100)
+mygrid=expand.grid(.decay=c(0.05,0.1),.size=c(3,4,5,6,7,8,9,10,12))
+nnetfit=train(TravelInsurance~., data=train, method= "nnet", mmaxit=1000,tuneGrid= mygrid,trace=F)
+nnetfit
+```
+
+choose decay=0.1 and size=6 accuracy=0.7840 
+
+```{r}
+set.seed(100)
+fit=nnet(TravelInsurance~., data=train,decay=0.1, size=6, liout=FALSE) 
+```
+
+(b) Compare the classification performance of your model with that of linear logistic regression.
+
+```{r}
+set.seed(100)
+NN_probs=predict(fit, test)
+NN_pred <- rep("No",378)
+NN_pred[NN_probs > 0.5] = "Yes"
+
+# The confusion matrix
+(cm <- table( NN_pred,test$TravelInsurance))
+
+#drawing confusion matrix
+##################################################
+NN_predicted_labels= ifelse(NN_probs > 0.5, 1, 0)
+
+pred=as.factor(NN_predicted_labels)
+
+cm_NN = confusionMatrix(pred,test$TravelInsurance,positive= "1")
+
+draw_confusion_matrix(cm_NN)
+##################################################
+
+```
